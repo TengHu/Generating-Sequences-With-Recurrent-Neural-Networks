@@ -33,7 +33,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 ###############################################################################
 parser = argparse.ArgumentParser(description='Character Level Language Model')
 parser.add_argument(
-    '--data', type=str, default='./text/enwik8', help='location of the data corpus')
+    '--data',
+    type=str,
+    default='./text/enwik8',
+    help='location of the data corpus')
 
 parser.add_argument(
     '--import_model',
@@ -178,11 +181,12 @@ def detach(layers):
     Remove variables' parent node after each sequence, 
     basically no where to propagate gradient 
     '''
-    if (type(layers) is list) or (type(layers) is tuple):    
+    if (type(layers) is list) or (type(layers) is tuple):
         for l in layers:
             detach(l)
     else:
         layers.detach_()
+
 
 def train(data):
     length = data.shape[1]  # DLSTM3
@@ -192,10 +196,10 @@ def train(data):
         layer=3, batch_size=args.batch_size, use_gpu=True)
 
     for batch_idx, idx in enumerate(range(0, length - args.bptt, args.bptt)):
-        
+
         inputs, targets = get_batch(data, idx)
         detach(hiddens)
-        
+
         optimizer.zero_grad()
 
         outputs, hiddens = model(inputs, hiddens)
@@ -243,7 +247,6 @@ try:
         '''All in tenors '''
         train_data, valid_data, test_data = corpus.shuffle()
 
-        
         train_data = batchify(OneHotEncoding(train_data)).to(device)
         loss = train(train_data)
         all_losses.append(loss)
