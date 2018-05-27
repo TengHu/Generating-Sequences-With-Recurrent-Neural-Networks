@@ -1,7 +1,11 @@
 import os
 import torch
 import numpy as np
+from cache import cached
 
+@cached()
+def get_corpus(path=""):
+    return Corpus(path)
 
 class Vocabulary(object):
     def __init__(self):
@@ -21,7 +25,8 @@ class Vocabulary(object):
 
 class Corpus(object):
     def __init__(self, path):
-        print("initializing vocabulary from corpus")
+        print("Initializing Corpus from file")
+        
         self.vocabulary = Vocabulary()
         self.data = self.tokenize(path)
 
@@ -57,21 +62,26 @@ class Corpus(object):
         """Tokenizes a text file."""
         assert os.path.exists(path)
 
-        # Construct for the corpus
-        with open(path, 'r') as f:
-            ntokens = 0
-            for line in f:
-                for char in line:
-                    self.vocabulary.add_char(char)
-                    ntokens += 1
+        # Construct vocabulary for the corpus
+        print("Constructing Vocabulary")
 
+        file = open(path, encoding='utf-8').read()
+        ntokens = 0
+        print(len(file))
+        for char in file:
+            self.vocabulary.add_char(char)
+            ntokens += 1
         self.vocabulary.ntokens = ntokens
+
+        print("Tokenizing file")
         # Tokenize file content
-        with open(path, 'r') as f:
-            ids = torch.LongTensor(ntokens)
-            token = 0
-            for line in f:
-                for char in line:
-                    ids[token] = self.vocabulary.char2idx[char]
-                    token += 1
+        ids = torch.LongTensor(ntokens)
+        token = 0
+        for char in file:
+            ids[token] = self.vocabulary.char2idx[char]
+            token += 1
+            if token % 10000 == 0:
+                print("In Progress: {} / {}".format(token, ntokens))
+        del file
+        print("Done!\n")
         return ids

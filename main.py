@@ -28,11 +28,12 @@ import argparse
 import data
 
 torch.manual_seed(1)
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 ###############################################################################
 parser = argparse.ArgumentParser(description='Character Level Language Model')
 parser.add_argument(
-    '--data', type=str, default='./enwiki', help='location of the data corpus')
+    '--data', type=str, default='./text/enwik8', help='location of the data corpus')
 
 parser.add_argument(
     '--import_model',
@@ -76,40 +77,11 @@ parser.add_argument(
     help='plot the loss every # iterations')
 args = parser.parse_args()
 
-
-###############################################################################
-# Helper Functions
-###############################################################################
-def find_files(path):
-    return glob.glob(path)
-
-
-def read_lines(filename):
-    lines = open(filename, encoding='utf-8').read()  # remove newline
-    return lines
-
-
-'''
-Data Preprocessing
-return tensor: (1, sequence, n_letter)
-'''
-
-
-def string2Tensor(text):
-    tensor = np.zeros((1, len(text), n_letters), dtype=np.float32)
-    for li in range(len(text)):
-        letter = text[li]
-        tensor[0][li][char_to_index[letter]] = 1
-        return torch.Tensor(tensor)
-
-
 ###############################################################################
 # Load Data
 ###############################################################################
 
-TEXT_PATH = './enwik8_tail_1000'
-corpus = data.Corpus(TEXT_PATH)
-
+corpus = data.get_corpus(path=args.data)
 ###############################################################################
 # Build Model
 ###############################################################################
@@ -117,7 +89,6 @@ corpus = data.Corpus(TEXT_PATH)
 feature_size = corpus.vocabulary.ntokens
 hidden_size = args.hidden_size
 model_type = args.model
-print(args.import_model)
 if args.import_model != 'NONE':
     print("=> loading checkpoint ")
     checkpoint = torch.load(args.import_model)
@@ -127,11 +98,11 @@ if args.import_model != 'NONE':
 if model_type == 'DLSTM3':
     model = models.DLSTM3(feature_size, hidden_size)
 
+model = model.to(device)
+
 ###############################################################################
-# Training code
+# Helper Functions
 ###############################################################################
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-criterion = nn.NLLLoss()
 
 
 def save_checkpoint(state, filename='checkpoint.pth'):
@@ -144,62 +115,119 @@ def save_checkpoint(state, filename='checkpoint.pth'):
 
 def batchify(data):
     '''
-    Tensorify the data make it ready for getting batches
-    (batch_size, nbatch)
+    data make it ready for getting batches
+    Output: (batch_size, nbatch, features)
     '''
     nbatch = data.shape[0] // args.batch_size
     data = data[:nbatch * args.batch_size]
-    return data.view(batch_size, -1)
+    return data.view(args.batch_size, -1, corpus.vocabulary.ntokens)
+
+
+def OneHotEncoding(idxs):
+    '''
+    Output: (ntokens, features)
+    '''
+    length = idxs.shape[0]
+    pdb.set_trace()
+    tensor = np.zeros((length, corpus.vocabulary.ntokens), dtype=np.float32)
+    for i in range(length):
+        tensor[i][idxs[i]] = 1
+    return torch.Tensor(tensor).pin_memory()
 
 
 def get_batch(data, idx):
-    inputs = data[:, idx:idx + args.bptt]
-    targets = data[:, (idx + 1):(idx + 1) + args.bptt]
-    return inputs, targets
+    '''
+    Output: 
+    (batch_size, sequence, features)
+    (batch_size, features)
+    '''
+    inputs = data[:, idx:(idx + args.bptt), :]
+    targets = data[:, (idx + args.bptt), :]
+    return inputs, targets.long()
+
+
+def tensor2idx(tensor):
+    '''
+    Input: (#batch, feature)
+    Output: (#batch)
+    '''
+    batch_size = tensor.shape[0]
+    idx = np.zeros((batch_size), dtype=np.int64)
+
+    for i in range(0, batch_size):
+        idx[i] = torch.nonzero(tensor[i])[0].data[0]
+    return torch.LongTensor(idx)
+
+
+###############################################################################
+# Training code
+###############################################################################
+optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+criterion = nn.NLLLoss()
 
 
 def get_loss(outputs, targets):
     loss = 0
-    for i in range(0, args.bptt):
-        loss += criterion(outputs[i], target_tensor[i])
+    #for i in range(0, args.bptt):
+    loss += criterion(outputs[:, -1, :], tensor2idx(targets).to(device))
     return loss
 
+
+def detach(layers):
+    '''
+    Remove variables' parent node after each sequence, 
+    basically no where to propagate gradient 
+    '''
+    if (type(layers) is list) or (type(layers) is tuple):    
+        for l in layers:
+            detach(l)
+    else:
+        layers.detach_()
 
 def train(data):
     length = data.shape[1]  # DLSTM3
     losses = []
+    total_loss = 0
     hiddens = model.initHidden(
         layer=3, batch_size=args.batch_size, use_gpu=True)
 
     for batch_idx, idx in enumerate(range(0, length - args.bptt, args.bptt)):
+        
         inputs, targets = get_batch(data, idx)
+        detach(hiddens)
+        
         optimizer.zero_grad()
-        outputs = model(inputs, hiddens)
 
+        outputs, hiddens = model(inputs, hiddens)
         loss = get_loss(outputs, targets)
         loss.backward()
-        torch.nn.utils.clip_grad_norm(model.parameters(), max_clip_norm)
-        optimizer.step()
 
-        if iter % args.print_every == 0 and iter > 0:
+        #torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
+        optimizer.step()
+        total_loss += loss.item()
+
+        if batch_idx % args.print_every == 0 and batch_idx > 0:
             print(
-                "Epoch : {}, Iteration {} / {}, Loss per {} :  {}, Takes {} Seconds".
-                format(epoch, iter, iters, print_every, loss,
+                "Epoch : {}, Iteration {} / {}, Loss every {} iteration :  {}, Takes {} Seconds".
+                format(epoch, batch_idx, int((length - args.bptt) / args.bptt),
+                       args.print_every, loss.item(),
                        time.time() - start))
 
-        if iter % args.plot_every == 0 and iter > 0:
-            losses.append(total_loss / plot_every)
+        if batch_idx % args.plot_every == 0 and batch_idx > 0:
+            losses.append(total_loss / args.plot_every)
             total_loss = 0
 
-        if iter % args.save_every == 0 and iter > 0:
+        if batch_idx % args.save_every == 0 and batch_idx > 0:
             save_checkpoint({
                 'epoch': epoch,
-                'iter': iter,
+                'iter': batch_idx,
                 'losses': losses,
                 'state_dict': model.state_dict(),
                 'optimizer': optimizer.state_dict(),
             }, "checkpoint_{}_epoch_{}_iteration_{}.{}.pth".format(
                 int(time.time()), epoch, iter, model_type))
+        del loss, outputs
+
     return losses
 
 
@@ -208,14 +236,15 @@ Training Loop
 Can interrupt with Ctrl + C
 '''
 start = time.time()
-all_losses
+all_losses = []
 try:
+    print("Start Training\n")
     for epoch in range(1, args.epochs + 1):
         '''All in tenors '''
         train_data, valid_data, test_data = corpus.shuffle()
-        train_data = batchify(train_data)
-        valid_data = batchify(valid_data)
-        test_data = batchify(test_data)
+
+        
+        train_data = batchify(OneHotEncoding(train_data)).to(device)
         loss = train(train_data)
         all_losses.append(loss)
 
