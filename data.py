@@ -3,9 +3,11 @@ import torch
 import numpy as np
 from cache import cached
 
+
 @cached()
 def get_corpus(path=""):
     return Corpus(path)
+
 
 class Vocabulary(object):
     def __init__(self):
@@ -26,7 +28,7 @@ class Vocabulary(object):
 class Corpus(object):
     def __init__(self, path):
         print("Initializing Corpus from file")
-        
+
         self.vocabulary = Vocabulary()
         self.data = self.tokenize(path)
 
@@ -47,16 +49,13 @@ class Corpus(object):
             corpus2 = corpus[end:start]
             return corpus1, corpus2
 
-    def shuffle(self, train=0.8, valid=0.1, test=0.1):
+    def shuffle(self, train=0.8):
         '''
-        random shuffling into train, valid and test in tensors
+        random shuffling into train, valid in tensors
         '''
-        assert train + valid + test == 1.0
 
         train_data, remain = self.split(self.data, ratio=train)
-        valid_data, test_data = self.split(
-            remain, ratio=valid / (valid + test))
-        return train_data, valid_data, test_data
+        return train_data, remain
 
     def tokenize(self, path):
         """Tokenizes a text file."""
