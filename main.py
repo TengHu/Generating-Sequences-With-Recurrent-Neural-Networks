@@ -110,8 +110,14 @@ model_type = args.model
 
 if args.import_model != 'NONE':
     print("=> loading checkpoint ")
-    checkpoint = torch.load(args.import_model)
+    if torch.cuda.is_available() is False:
+        checkpoint = torch.load(args.import_model, map_location=lambda storage, loc:storage)    
+    else:
+        checkpoint = torch.load(args.import_model)
+
+
     model_type = args.import_model.split('.')[1]
+    
     if model_type == 'DLSTM3':
         model = models.DLSTM3(feature_size, hidden_size)
         model.load_state_dict(checkpoint['state_dict'])
@@ -127,6 +133,7 @@ model = model.to(device)
 ###############################################################################
 # Helper Functions
 ###############################################################################
+
 
 def save_checkpoint(state, filename='checkpoint.pth'):
     '''
@@ -182,8 +189,7 @@ except NameError:
     print("Optimizer initializing")
 
 criterion = nn.NLLLoss().to(device)
-warm_up_text = "In various musical styles, anarchism rose in popularity.  Most famous for the linking of anarchist ideas and music has been punk rock, althoug
-h in the modern age, hip hop, and folk music are also becoming important mediums for the spreading of the anarchist message."
+warm_up_text = "In various musical styles, anarchism rose in popularity.  Most famous for the linking of anarchist ideas and music has been punk rock, although in the modern age, hip hop, and folk music are also becoming important mediums for the spreading of the anarchist message."
 
 
 def get_loss(outputs, targets):
@@ -314,6 +320,7 @@ Can interrupt with Ctrl + C
 '''
 start = time.time()
 all_losses = []
+
 try:
     print("Start Training\n")
 
@@ -324,7 +331,6 @@ try:
         valid_data = batchify(valid_data).to(device).contiguous()
         evaluate(valid_data)
         all_losses.append(loss)
-
 except KeyboardInterrupt:
     print('#' * 90)
     print('Exiting from training early')
@@ -333,7 +339,7 @@ sample(
     warm_up_text, save_to_file=True, max_sample_length=args.max_sample_length)
 
 with open("losses", 'w') as f:
-    f.write(all_losses)
+    f.write(str(all_losses))
 
 print('#' * 90)
 print("Training finished ! Takes {} seconds ".format(time.time() - start))

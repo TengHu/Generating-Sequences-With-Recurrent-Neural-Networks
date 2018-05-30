@@ -6,23 +6,6 @@ import pdb
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-class RNN(nn.Module):
-    def __init__(self, feature_size, hidden_size):
-        super(DLSTM3, self).__init__()
-        self.feature_size = feature_size
-        self.hidden_size = hidden_size
-
-        self.h2o = nn.Linear(hidden_size * 3, feature_size)
-
-    def forward(self, input, hiddens):
-        return F.log_softmax(outputs, 2)
-
-    def initHidden(self, layer=1, batch_size=50, use_gpu=True):
-        h = torch.randn(1, batch_size, self.hidden_size).pin_memory()
-        if use_gpu:
-            h = h.to(device)
-        return hidden_layers
-
 
 class DLSTM3(nn.Module):
     '''
@@ -68,10 +51,8 @@ class DLSTM3(nn.Module):
     def initHidden(self, layer=1, batch_size=50):
         hidden_layers = []
         for i in range(0, layer):
-            h = torch.randn(1, batch_size,
-                            self.hidden_size).to(device)
-            c = torch.randn(1, batch_size,
-                            self.hidden_size).to(device)
+            h = torch.randn(1, batch_size, self.hidden_size).to(device)
+            c = torch.randn(1, batch_size, self.hidden_size).to(device)
             hidden_layers.append((h, c))
         return hidden_layers
 
@@ -88,4 +69,4 @@ class DLSTM3(nn.Module):
             for j in range(0, sequence):
                 tensor[i][j][inputs[i][j]] = 1
 
-        return torch.Tensor(tensor).pin_memory().to(device)
+        return torch.Tensor(tensor).to(device)
