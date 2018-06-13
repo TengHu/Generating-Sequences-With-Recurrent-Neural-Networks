@@ -209,7 +209,6 @@ warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
 
 def get_loss(outputs, targets):
     loss = 0
-    #for i in range(0, args.bptt):
     loss += criterion(outputs[:, -1, :], targets)
     return loss
 
@@ -317,7 +316,10 @@ def train(data):
 def evaluate(data):
     length = data.shape[1]  # number of chars per batch
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
-    total_loss = 0
+
+    total = 0
+    correct = 0
+    
     bpc = []
     for batch_idx, idx in enumerate(range(0, length - args.bptt, args.bptt)):
         inputs, targets = get_batch(data, idx)
@@ -325,11 +327,14 @@ def evaluate(data):
         outputs, hiddens = model(inputs, hiddens)
         
         loss = get_loss(outputs, targets)
+        total += outputs.shape[0]
+        correct += (tensor2idx(outputs[:,-1,:]) == targets).sum()
+        
         bpc.append(loss)
-        total_loss += loss.item()
         del loss, outputs
 
-    print("Evaluation: total loss: {}, Bits-per-character: {}".format(total_loss, sum(bpc)/len(bpc)))
+    print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Erros: {} % \n"
+          .format(sum(bpc)/len(bpc), "N/A", correct/total))
 
 
 '''
@@ -357,5 +362,10 @@ sample(warm_up_text, save_to_file=True, max_sample_length=args.max_sample_length
 with open("losses", 'w') as f:
     f.write(str(all_losses))
 
+
+model_name = "{}.{}.pth".format(model_type, time.time())
+save_checkpoint({'state_dict': model.state_dict()}, model_name)
+print ("Model {} Saved".format(model_name))
+    
 print('#' * 90)
 print("Training finished ! Takes {} seconds ".format(time.time() - start))
