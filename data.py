@@ -9,7 +9,7 @@ def get_corpus(path="", corpus=None):
     if corpus is not None:
         return Corpus(vocabulary=corpus.vocabulary, path=path)
     else:
-        return Corpus(path)
+        return Corpus(path=path)
 
 class Vocabulary(object):
     def __init__(self):
