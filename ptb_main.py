@@ -112,8 +112,8 @@ args = parser.parse_args()
 
 corpus = data.get_corpus(path=args.train)
 train_data = corpus.data
-valid_data = data.get_corpus(path=args.valid).data
-test_data = data.get_corpus(path=args.test).data
+valid_data = data.get_corpus(corpus=corpus, path=args.valid).data
+test_data = data.get_corpus(corpus=corpus, path=args.test).data
 
 ###############################################################################
 # Build Model

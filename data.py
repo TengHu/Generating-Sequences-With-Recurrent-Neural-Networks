@@ -5,15 +5,16 @@ from cache import cached
 
 
 @cached()
-def get_corpus(path=""):
-    return Corpus(path)
-
+def get_corpus(path="", corpus=None):
+    if corpus is not None:
+        return Corpus(vocabulary=corpus.vocabulary, path=path)
+    else:
+        return Corpus(path)
 
 class Vocabulary(object):
     def __init__(self):
         self.char2idx = {}
         self.idx2char = []
-        self.ntokens = 0
 
     def add_char(self, char):
         if char not in self.char2idx:
@@ -26,11 +27,12 @@ class Vocabulary(object):
 
 
 class Corpus(object):
-    def __init__(self, path):
+    def __init__(self, vocabulary=None, path=""):
         print("Initializing Corpus from file")
 
-        self.vocabulary = Vocabulary()
+        self.vocabulary = vocabulary
         self.data = self.tokenize(path)
+            
 
     def split(self, corpus, ratio=0.5):
         '''
@@ -61,16 +63,16 @@ class Corpus(object):
         """Tokenizes a text file."""
         assert os.path.exists(path)
 
-        # Construct vocabulary for the corpus
-        print("Constructing Vocabulary")
-
         file = open(path, encoding='utf-8').read()
-        ntokens = 0
-        print(len(file))
-        for char in file:
-            self.vocabulary.add_char(char)
-            ntokens += 1
-        self.vocabulary.ntokens = ntokens
+        ntokens = len(file)
+        print ("File has {} tokens".format(ntokens))
+        
+        if self.vocabulary == None:
+            self.vocabulary = Vocabulary()
+            # Construct vocabulary for the corpus
+            print("Constructing Vocabulary")
+            for char in file:
+                self.vocabulary.add_char(char)
 
         print("Tokenizing file")
         # Tokenize file content
