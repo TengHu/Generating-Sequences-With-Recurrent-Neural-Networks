@@ -318,14 +318,18 @@ def evaluate(data):
     length = data.shape[1]  # number of chars per batch
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
     total_loss = 0
+    bpc = []
     for batch_idx, idx in enumerate(range(0, length - args.bptt, args.bptt)):
         inputs, targets = get_batch(data, idx)
         detach(hiddens)
         outputs, hiddens = model(inputs, hiddens)
+        
         loss = get_loss(outputs, targets)
+        bpc.append(loss)
         total_loss += loss.item()
         del loss, outputs
-    print("Evaluation: total loss: {}".format(total_loss))
+
+    print("Evaluation: total loss: {}, Bits-per-character: {}".format(total_loss, sum(bpc)/len(bpc)))
 
 
 '''
