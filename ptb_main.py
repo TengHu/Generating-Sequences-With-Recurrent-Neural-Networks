@@ -351,8 +351,10 @@ def evaluate(data):
         correct += (tensor2idx(outputs[:,-1,:voc_length]) == targets.cpu()).sum()
         bpc.append(loss)
         del loss, outputs
-    print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Errors: {} % \n"
-          .format(sum(bpc) / len(bpc), "N/A", correct.numpy() / total))
+    if total == 0:
+        print ("Validation Set too small, reduce batch size")
+    else:
+        print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Accuracy: {} % \n".format(sum(bpc) / len(bpc), "N/A", correct.numpy() / total))
 
 
 '''
@@ -364,7 +366,6 @@ all_losses = []
 
 try:
     print("Start Training\n")
-
     for epoch in range(1, args.epochs + 1):
         train_data_, valid_data_ = train_data, valid_data
         
