@@ -5,13 +5,10 @@ import numpy as np
 import pdb
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-
 class DLSTM3(nn.Module):
     '''
     Three layer RNN with lstm cells
-    
-    Input: (batch, seq, feature)
+    Input: (batch, seq, ids)
     Hidden: (num_layers * direction, batch, hidden_feature)
     Output: (batch, seq, feature)
     '''
@@ -39,9 +36,9 @@ class DLSTM3(nn.Module):
 
         self.h2o = nn.Linear(hidden_size * 3, feature_size)
 
-    def forward(self, inputs, hiddens):
+    def forward(self, inputs, hiddens, vocabulary_length, position_feature_size):
         [h1, h2, h3] = hiddens
-        inputs = self.OneHotEncoding(inputs)
+        inputs = self.OneHotEncoding(inputs, vocabulary_length, position_feature_size)
         h1_outputs, h1 = self.h1(inputs, h1)
         h2_outputs, h2 = self.h2(torch.cat((inputs, h1_outputs), 2), h2)
         h3_outputs, h3 = self.h3(torch.cat((inputs, h2_outputs), 2), h3)
@@ -56,9 +53,9 @@ class DLSTM3(nn.Module):
             hidden_layers.append((h, c))
         return hidden_layers
 
-    def OneHotEncoding(self, inputs):
+    def OneHotEncoding(self, inputs, vocabulary_length, position_feature_size):
         '''
-        Input: (batch_size, sequence)
+        Input: (batch_size, sequence, ids)
         Output: (batch_size, sequence, features)
         '''
         batch_size = inputs.shape[0]
@@ -67,6 +64,15 @@ class DLSTM3(nn.Module):
             (batch_size, sequence, self.feature_size), dtype=np.float32)
         for i in range(0, batch_size):
             for j in range(0, sequence):
-                tensor[i][j][inputs[i][j]] = 1
-
+                tensor[i][j][int(inputs[i][j][0])] = 1 # character index in vocabulary
+        
+                tensor[i][j][vocabulary_length:] = inputs[i][j][1:]
+                #for k in range(0, inputs.shape[2]):
+                #    if k == 0:
+                #        tensor[i][j][inputs[i][j][k]] = 1
+                #    else:
+                        ## add positional features, append or add
+                #        tensor[i][j][vocabulary_length + k] = inputs[i][j][k] 
+                        #inputs[i][j][k] * position_feature_size + position_feature_size * (k-1)  + vocabulary_length]
+        
         return torch.Tensor(tensor).to(device)

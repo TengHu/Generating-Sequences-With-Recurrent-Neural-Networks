@@ -56,6 +56,12 @@ parser.add_argument(
     '--model', type=str, default='DLSTM3', help='models: DLSTM3')
 
 parser.add_argument(
+    '--position_codes', type=str, default='', help='number of position features')
+
+parser.add_argument(
+    '--position_feature_size', type=int, default=100, help='position feature size')
+
+parser.add_argument(
     '--hidden_size', type=int, default=128, help='# of hidden units')
 
 parser.add_argument(
@@ -109,8 +115,8 @@ args = parser.parse_args()
 ###############################################################################
 # Load Data
 ###############################################################################
+corpus = data.get_corpus(path=args.train, special_tokens=args.position_codes)
 
-corpus = data.get_corpus(path=args.train)
 train_data = corpus.data
 valid_data = data.get_corpus(corpus=corpus, path=args.valid).data
 test_data = data.get_corpus(corpus=corpus, path=args.test).data
@@ -119,7 +125,10 @@ test_data = data.get_corpus(corpus=corpus, path=args.test).data
 # Build Model
 ###############################################################################
 
-feature_size = len(corpus.vocabulary)
+#feature_size = len(corpus.vocabulary) + len(args.position_codes) * args.positi#on_feature_size
+
+feature_size = len(corpus.vocabulary) + len(args.position_codes)
+
 hidden_size = args.hidden_size
 model_type = args.model
 
@@ -149,7 +158,6 @@ model = model.to(device)
 # Helper Functions
 ###############################################################################
 
-
 def save_checkpoint(state, filename='checkpoint.pth'):
     '''
     One dimensional array
@@ -157,27 +165,29 @@ def save_checkpoint(state, filename='checkpoint.pth'):
     torch.save(state, filename)
     print("{} saved ! \n".format(filename))
 
-
 def batchify(data):
     '''
     data make it ready for getting batches
-    Input: (number of characters)
+    Input: (number of characters, ids)
     Output: (batch_size, -1)
     '''
     nbatch = data.shape[0] // args.batch_size
-    data = data[:nbatch * args.batch_size]
-    return data.view(args.batch_size, -1).to(device)
-
+    num_ids = data.shape[1]
+    data = data[:nbatch * args.batch_size, :]
+    return data.view(args.batch_size, -1, num_ids).to(device)
 
 def get_batch(data, idx):
     '''
+    Input: (number_of_chars, ids)
     Output: 
-    (batch_size, sequence)
+    (batch_size, sequence, ids)
     (batch_size)
     '''
-    inputs = data[:, idx:(idx + args.bptt)]
+    inputs = data[:, idx:(idx + args.bptt), :]
     targets = data[:, (idx + args.bptt)]
-    return inputs.to(device), targets.long().to(device)
+
+    ## For target, we only need the first char element, discard position codes
+    return inputs.to(device), targets[:,0].long().to(device)
 
 
 def tensor2idx(tensor):
@@ -189,7 +199,8 @@ def tensor2idx(tensor):
     idx = np.zeros((batch_size), dtype=np.int64)
 
     for i in range(0, batch_size):
-        idx[i] = torch.nonzero(tensor[i])[0].data[0]
+        value, indice = tensor[i].min(0) # dimension 0
+        idx[i] = indice
     return torch.LongTensor(idx)
 
 
@@ -204,7 +215,6 @@ except NameError:
     print("Optimizer initializing")
 
 criterion = nn.NLLLoss().to(device)
-
 warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
 
 def get_loss(outputs, targets):
@@ -212,8 +222,13 @@ def get_loss(outputs, targets):
     loss += criterion(outputs[:, -1, :], targets)
     return loss
 
-
 def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
+    '''
+    Havent figured out how to do sampling
+    '''
+    return
+
+
     try:
         assert len(text) >= args.bptt
     except AssertionError:
@@ -232,7 +247,7 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     hiddens = model.initHidden(layer=3, batch_size=1)
 
     for i in range(0, max_sample_length):
-        outputs, hiddens = model(inputs, hiddens)
+        outputs, hiddens = model(inputs, hiddens, len(corpus.vocabulary), args.position_feature_size)
         char_id = torch.multinomial(
             outputs[0][-1].exp() / temperature, num_samples=1).item()
         output_text += corpus.vocabulary.idx2char[char_id]
@@ -265,7 +280,7 @@ def detach(layers):
 
 
 def train(data):
-    length = data.shape[1]  # number of chars per batch
+    length = data.shape[1]  # sequence length
     losses = []
     total_loss = 0
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
@@ -275,7 +290,7 @@ def train(data):
         detach(hiddens)
         optimizer.zero_grad()
 
-        outputs, hiddens = model(inputs, hiddens)
+        outputs, hiddens = model(inputs, hiddens, len(corpus.vocabulary), args.position_feature_size)
         loss = get_loss(outputs, targets)
         loss.backward(retain_graph=True)
 
@@ -316,25 +331,24 @@ def train(data):
 def evaluate(data):
     length = data.shape[1]  # number of chars per batch
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
-
-    total = 0
-    correct = 0
+    total = 0.0
+    correct = 0.0
+    voc_length = len(corpus.vocabulary)
     
     bpc = []
     for batch_idx, idx in enumerate(range(0, length - args.bptt, args.bptt)):
         inputs, targets = get_batch(data, idx)
         detach(hiddens)
-        outputs, hiddens = model(inputs, hiddens)
-        
+        outputs, hiddens = model(inputs, hiddens, voc_length, args.position_feature_size)
         loss = get_loss(outputs, targets)
         total += outputs.shape[0]
-        correct += (tensor2idx(outputs[:,-1,:]) == targets).sum()
-        
+
+        ## only need feature vocabulary length 
+        correct += (tensor2idx(outputs[:,-1,:voc_length]) == targets).sum()
         bpc.append(loss)
         del loss, outputs
-
-    print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Erros: {} % \n"
-          .format(sum(bpc)/len(bpc), "N/A", correct/total))
+    print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Errors: {} % \n"
+          .format(sum(bpc) / len(bpc), "N/A", correct.numpy() / total))
 
 
 '''
@@ -348,11 +362,13 @@ try:
     print("Start Training\n")
 
     for epoch in range(1, args.epochs + 1):
-        train_data = batchify(train_data).to(device).contiguous()
-        loss = train(train_data)
-        valid_data = batchify(valid_data).to(device).contiguous()
-        evaluate(valid_data)
-        all_losses.append(loss)
+        train_data_, valid_data_ = train_data, valid_data
+        
+        train_data_ = batchify(train_data_).to(device).contiguous()
+        loss = train(train_data_)
+        valid_data_ = batchify(valid_data_).to(device).contiguous()
+        evaluate(valid_data_)
+        all_losses += loss
 except KeyboardInterrupt:
     print('#' * 90)
     print('Exiting from training early')

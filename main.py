@@ -44,6 +44,9 @@ parser.add_argument(
     '--model', type=str, default='DLSTM3', help='models: DLSTM3')
 
 parser.add_argument(
+    '--position_codes', type=str, default='', help='number of position features')
+
+parser.add_argument(
     '--hidden_size', type=int, default=128, help='# of hidden units')
 
 parser.add_argument(
@@ -104,7 +107,11 @@ corpus = data.get_corpus(path=args.data)
 # Build Model
 ###############################################################################
 
-feature_size = len(corpus.vocabulary)
+feature_size = len(corpus.vocabulary) + args.position_codes * 100
+
+
+
+
 hidden_size = args.hidden_size
 model_type = args.model
 
@@ -134,14 +141,12 @@ model = model.to(device)
 # Helper Functions
 ###############################################################################
 
-
 def save_checkpoint(state, filename='checkpoint.pth'):
     '''
     One dimensional array
     '''
     torch.save(state, filename)
     print("{} saved ! \n".format(filename))
-
 
 def batchify(data):
     '''
@@ -153,11 +158,11 @@ def batchify(data):
     data = data[:nbatch * args.batch_size]
     return data.view(args.batch_size, -1).to(device)
 
-
 def get_batch(data, idx):
     '''
+    Input: (number_of_chars, ids)
     Output: 
-    (batch_size, sequence)
+    (batch_size, sequence, ids)
     (batch_size)
     '''
     inputs = data[:, idx:(idx + args.bptt)]
@@ -189,15 +194,12 @@ except NameError:
     print("Optimizer initializing")
 
 criterion = nn.NLLLoss().to(device)
-warm_up_text = "In various musical styles, anarchism rose in popularity.  Most famous for the linking of anarchist ideas and music has been punk rock, although in the modern age, hip hop, and folk music are also becoming important mediums for the spreading of the anarchist message."
-
+warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
 
 def get_loss(outputs, targets):
     loss = 0
-    #for i in range(0, args.bptt):
     loss += criterion(outputs[:, -1, :], targets)
     return loss
-
 
 def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     try:
@@ -316,7 +318,7 @@ def evaluate(data):
 
 '''
 Training Loop
-Can interrupt with Ctrl + C
+Interrupt with Ctrl + C
 '''
 start = time.time()
 all_losses = []
@@ -330,7 +332,7 @@ try:
         loss = train(train_data)
         valid_data = batchify(valid_data).to(device).contiguous()
         evaluate(valid_data)
-        all_losses.append(loss)
+        all_losses += loss
 except KeyboardInterrupt:
     print('#' * 90)
     print('Exiting from training early')
