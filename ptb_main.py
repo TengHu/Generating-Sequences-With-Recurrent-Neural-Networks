@@ -25,6 +25,9 @@ import data
 torch.manual_seed(1)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+torch.backends.cudnn.enabled = True
+torch.backends.cudnn.benchmark = True
+
 ###############################################################################
 parser = argparse.ArgumentParser(description='Character Level Language Model')
 parser.add_argument(
@@ -111,7 +114,6 @@ parser.add_argument(
     help='max sampled characters')
 
 args = parser.parse_args()
-
 ###############################################################################
 # Load Data
 ###############################################################################
@@ -226,7 +228,6 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     '''
     Havent figured out how to do sampling
     '''
-    return
 
 
     try:
@@ -276,7 +277,7 @@ def detach(layers):
         for l in layers:
             detach(l)
     else:
-        layers.detach()
+        layers.detach_()
 
 
 def train(data):
@@ -329,6 +330,9 @@ def train(data):
 
 
 def evaluate(data):
+    '''
+    Undynamic evaluation
+    '''
     length = data.shape[1]  # number of chars per batch
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
     total = 0.0
@@ -342,9 +346,9 @@ def evaluate(data):
         outputs, hiddens = model(inputs, hiddens, voc_length, args.position_feature_size)
         loss = get_loss(outputs, targets)
         total += outputs.shape[0]
-
+        
         ## only need feature vocabulary length 
-        correct += (tensor2idx(outputs[:,-1,:voc_length]) == targets).sum()
+        correct += (tensor2idx(outputs[:,-1,:voc_length]) == targets.cpu()).sum()
         bpc.append(loss)
         del loss, outputs
     print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Errors: {} % \n"
