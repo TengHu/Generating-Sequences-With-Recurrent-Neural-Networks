@@ -1,6 +1,8 @@
 #!/bin/sh
 
-:'
+_='
+Comments and some resources
+
 GPU Performance
 torch.backends.cudnn.benchmark = True
 

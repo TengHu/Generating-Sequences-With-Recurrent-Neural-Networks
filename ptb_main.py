@@ -22,6 +22,8 @@ import argparse
 from utils import one_hot
 import data
 
+import multiprocessing as mp
+
 torch.manual_seed(1)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -36,7 +38,6 @@ parser.add_argument(
     type=int,
     default=2,
     help='number of worker to load the data')
-
 
 parser.add_argument(
     '--train',
@@ -67,10 +68,16 @@ parser.add_argument(
     '--model', type=str, default='DLSTM3', help='models: DLSTM3')
 
 parser.add_argument(
-    '--position_codes', type=str, default='', help='number of position features')
+    '--position_codes',
+    type=str,
+    default='',
+    help='number of position features')
 
 parser.add_argument(
-    '--position_feature_size', type=int, default=100, help='position feature size')
+    '--position_feature_size',
+    type=int,
+    default=100,
+    help='position feature size')
 
 parser.add_argument(
     '--hidden_size', type=int, default=128, help='# of hidden units')
@@ -124,8 +131,9 @@ parser.add_argument(
 args = parser.parse_args()
 
 ###############################################################################
-# Helper Functions
+# Data Preprocessing Helper Functions
 ###############################################################################
+
 
 def save_checkpoint(state, filename='checkpoint.pth'):
     '''
@@ -133,6 +141,7 @@ def save_checkpoint(state, filename='checkpoint.pth'):
     '''
     torch.save(state, filename)
     print("{} saved ! \n".format(filename))
+
 
 def batchify(data):
     '''
@@ -142,7 +151,8 @@ def batchify(data):
     '''
     nbatch = data.shape[0] // args.batch_size
     data = data[:nbatch * args.batch_size, :]
-    return data.to(device)
+    return data
+
 
 def get_batch(data, idx):
     '''
@@ -155,7 +165,8 @@ def get_batch(data, idx):
     targets = data[:, (idx + args.bptt)]
 
     ## For target, we only need the first char element, discard position codes
-    return inputs.to(device), targets[:,0].long().to(device)
+    return inputs, targets[:, 0].long()
+
 
 def sequentialize(data):
     '''
@@ -167,9 +178,10 @@ def sequentialize(data):
     '''
     ids_size = data.shape[1]
     nsequence = int(data.shape[0] / args.bptt)
-    data = data[0:nsequence*args.bptt, :].view(-1, args.bptt, ids_size)
-    targets = data[:, -1, 0] # only want the character id as target
+    data = data[0:nsequence * args.bptt, :].view(-1, args.bptt, ids_size)
+    targets = data[:, -1, 0]  # only want the character id as target
     return data, targets
+
 
 def tensor2idx(tensor):
     '''
@@ -180,7 +192,7 @@ def tensor2idx(tensor):
     idx = np.zeros((batch_size), dtype=np.int64)
 
     for i in range(0, batch_size):
-        value, indice = tensor[i].max(0) # dimension 0
+        value, indice = tensor[i].max(0)  # dimension 0
         idx[i] = indice
     return torch.LongTensor(idx)
 
@@ -188,84 +200,24 @@ def tensor2idx(tensor):
 def preprocess(data):
     inputs, targets = sequentialize(batchify(data))
     inputs = one_hot(inputs, feature_size)
-    return torch.utils.data.TensorDataset(inputs, targets)
-
-###############################################################################
-# Load Data And PreProcessing
-###############################################################################
-corpus = data.get_corpus(path=args.train, special_tokens=args.position_codes)
-
-print ("Loading Data, Be aware of old cache may not be compatible with loading data!!")
-
-'''
-inputs: (batch, sequence, feature)
-targets: (batch)
-'''
-
-feature_size = len(corpus.vocabulary) + len(args.position_codes)
-
-train_data = corpus.data
-train_dataset = preprocess(train_data)
-
-valid_data = data.get_corpus(corpus=corpus, path=args.valid).data
-valid_dataset = preprocess(valid_data)
-
-test_data = data.get_corpus(corpus=corpus, path=args.test).data
-test_dataset = preprocess(test_data)
-
+    return torch.utils.data.TensorDataset(
+        inputs, targets)  # CUDA
 
 
 ###############################################################################
-# Build Model
+# Training Helper Functions
 ###############################################################################
 
-#feature_size = len(corpus.vocabulary) + len(args.position_codes) * args.positi#on_feature_size
-
-hidden_size = args.hidden_size
-model_type = args.model
-
-if args.import_model != 'NONE':
-    print("=> loading checkpoint ")
-    if torch.cuda.is_available() is False:
-        checkpoint = torch.load(args.import_model, map_location=lambda storage, loc:storage)    
-    else:
-        checkpoint = torch.load(args.import_model)
-
-
-    model_type = args.import_model.split('.')[1]
-    
-    if model_type == 'DLSTM3':
-        model = models.DLSTM3(feature_size, hidden_size)
-        model.load_state_dict(checkpoint['state_dict'])
-    else:
-        raise ValueError("Model type not recognized")
-else:
-    if model_type == 'DLSTM3':
-        model = models.DLSTM3(feature_size, hidden_size)
-    else:
-        raise ValueError("Model type not recognized")
-
-model = model.to(device)
-
-
-
-###############################################################################
-# Training code
-###############################################################################
-
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-try:
-    optimizer.load_state_dict(checkpoint['optimizer'])
-except NameError:
-    print("Optimizer initializing")
-
-criterion = nn.NLLLoss().to(device)
-warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
 
 def get_loss(outputs, targets):
     loss = 0
-    loss += criterion(outputs[:, -1, :], targets.long())
+    try:
+        loss += criterion(outputs[:, -1, :], targets.long())
+    except:
+        pdb.set_trace()
+      
     return loss
+
 
 def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     '''
@@ -277,21 +229,22 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
         print("Sampling must start with text has more than {} characters \n".
               format(args.bptt))
     output_text = text
-    text = text[-args.bptt:] # drop last incomplete sequence
+    text = text[-args.bptt:]  # drop last incomplete sequence
 
-    
-    ids = torch.LongTensor(len(text), 1).to(device)
+    ids = torch.LongTensor(len(text), 1)
     token = 0
     for c in text:
         ## character id
         ids[token][0] = corpus.vocabulary.char2idx[c]
         token += 1
-    
-    inputs = ids.unsqueeze(0).to(device)
+
+    inputs = ids.unsqueeze(0) # create batch dimension, batch size = 1
     hiddens = model.initHidden(layer=3, batch_size=1)
 
     for i in range(0, max_sample_length):
-        outputs, hiddens = model(one_hot(inputs, feature_size), hiddens)    # TODO (niel.hu) temporarily use vocabulary size as feature size 
+        one_hot_input = one_hot(inputs, feature_size)
+        outputs, hiddens = model(one_hot_input.to(device), hiddens)
+        # TODO (niel.hu) temporarily use vocabulary size as feature size
 
         # sample character
         char_id = torch.multinomial(
@@ -326,17 +279,26 @@ def detach(layers):
         for l in layers:
             detach(l)
     else:
-        layers = layers.detach() # layers.detach_()
+        layers.detach_()  # layers = layers.detach()
 
 
 def train(dataset):
     losses = []
     total_loss = 0
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,
-                                             shuffle=False, num_workers=args.num_workers, drop_last=True)
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        drop_last=True,
+        pin_memory=True)
     for batch_idx, data in enumerate(dataloader, 0):
         inputs, targets = data
+        
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+        
         detach(hiddens)
         optimizer.zero_grad()
 
@@ -351,7 +313,8 @@ def train(dataset):
         if batch_idx % args.print_every == 0 and batch_idx > 0:
             print(
                 "Epoch : {} / {}, Iteration {} / {}, Loss every {} iteration :  {}, Takes {} Seconds".
-                format(epoch, args.epochs, batch_idx, int(len(trainset) / args.bptt), args.print_every,
+                format(epoch, args.epochs, batch_idx,
+                       int(len(dataset) / args.bptt), args.print_every,
                        loss.item(),
                        time.time() - start))
 
@@ -385,60 +348,145 @@ def evaluate(dataset):
     total = 0.0
     correct = 0.0
     voc_length = len(corpus.vocabulary)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size,shuffle=False, num_workers=args.num_workers, drop_last=True)
-    
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        drop_last=True,
+        pin_memory=True)
+
     bpc = []
     for batch_idx, data in enumerate(dataloader, 0):
         inputs, targets = data
+
+        inputs = inputs.to(device)
+        targets = targets.to(device)
+        
         detach(hiddens)
         outputs, hiddens = model(inputs, hiddens)
         loss = get_loss(outputs, targets)
         total += outputs.shape[0]
-        
-        ## only need feature vocabulary length 
-        correct += (tensor2idx(outputs[:,-1,:voc_length]) == targets.long().cpu()).sum()
+
+        ## only need feature vocabulary length
+        correct += (tensor2idx(
+            outputs[:, -1, :voc_length]) == targets.long().cpu()).sum()
         bpc.append(loss)
-    
+
     if total == 0:
-        print ("Validation Set too small, reduce batch size")
+        print("Validation Set too small, reduce batch size")
     else:
         ## Debug Accuracy calculation
-        print("Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Accuracy: {} % \n".format(sum(bpc) / len(bpc), "N/A", correct.numpy() / total))
+        print(
+            "Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Accuracy: {} % \n".
+            format(sum(bpc) / len(bpc), "N/A",
+                   correct.numpy() / total * 100))
     del loss, outputs
-    
 
-'''
-Training Loop
-Can interrupt with Ctrl + C
-'''
-start = time.time()
-all_losses = []
 
-try:
-    print("Start Training\n")
-    for epoch in range(1, args.epochs + 1):
-        loss = train(train_dataset)
-        all_losses += loss
-        evaluate(valid_dataset)
-except KeyboardInterrupt:
+if __name__ == "__main__":
+    mp.set_start_method(
+        'forkserver')  # for sharing CUDA tensors between processes
+
+    ###############################################################################
+    # Load Data And PreProcessing
+    ###############################################################################
+    print(
+        "Loading Data, Be aware of old cache may not be compatible with loading data!!\n"
+    )
+    '''
+    inputs: (batch, sequence, feature)
+    targets: (batch)
+    '''
+
+    corpus = data.get_corpus(
+        path=args.train, special_tokens=args.position_codes)
+    feature_size = len(corpus.vocabulary) + len(args.position_codes)
+
+    train_data = corpus.data
+    train_dataset = preprocess(train_data)
+
+    valid_data = data.get_corpus(corpus=corpus, path=args.valid).data
+    valid_dataset = preprocess(valid_data)
+
+    test_data = data.get_corpus(corpus=corpus, path=args.test).data
+    test_dataset = preprocess(test_data)
+
+    ###############################################################################
+    # Build Model
+    ###############################################################################
+
+    #feature_size = len(corpus.vocabulary) + len(args.position_codes) * args.positi#on_feature_size
+
+    hidden_size = args.hidden_size
+    model_type = args.model
+
+    if args.import_model != 'NONE':
+        print("=> loading checkpoint ")
+        if torch.cuda.is_available() is False:
+            checkpoint = torch.load(
+                args.import_model, map_location=lambda storage, loc: storage)
+        else:
+            checkpoint = torch.load(args.import_model)
+
+        model_type = args.import_model.split('.')[1]
+
+        if model_type == 'DLSTM3':
+            model = models.DLSTM3(feature_size, hidden_size)
+            model.load_state_dict(checkpoint['state_dict'])
+        else:
+            raise ValueError("Model type not recognized")
+    else:
+        if model_type == 'DLSTM3':
+            model = models.DLSTM3(feature_size, hidden_size)
+        else:
+            raise ValueError("Model type not recognized")
+
+    model = model.to(device)
+    ###############################################################################
+    # Training code
+    ###############################################################################
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    try:
+        optimizer.load_state_dict(checkpoint['optimizer'])
+    except NameError:
+        print("Optimizer initializing")
+
+    criterion = nn.NLLLoss().to(device)
+    warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
+    '''
+    Training Loop
+    Can interrupt with Ctrl + C
+    '''
+    start = time.time()
+    all_losses = []
+
+    try:
+        print("Start Training\n")
+        for epoch in range(1, args.epochs + 1):
+            loss = train(train_dataset)
+            all_losses += loss
+            evaluate(valid_dataset)
+    except KeyboardInterrupt:
+        print('#' * 90)
+        print('Exiting from training early')
+
+    print("DONE TRAINING")
+
+    print("Testing")
+    evaluate(test_dataset)
+
+    sample(
+        warm_up_text,
+        save_to_file=True,
+        max_sample_length=args.max_sample_length)
+
+    with open("losses", 'w') as f:
+        f.write(str(all_losses))
+
+    model_name = "{}.{}.pth".format(model_type, time.time())
+    save_checkpoint({'state_dict': model.state_dict()}, model_name)
+    print("Model {} Saved".format(model_name))
+
     print('#' * 90)
-    print('Exiting from training early')
-
-
-print ("DONE TRAINING")
-
-print ("Testing")
-evaluate(test_dataset)
-
-sample(warm_up_text, save_to_file=True, max_sample_length=args.max_sample_length)
-
-with open("losses", 'w') as f:
-    f.write(str(all_losses))
-
-
-model_name = "{}.{}.pth".format(model_type, time.time())
-save_checkpoint({'state_dict': model.state_dict()}, model_name)
-print ("Model {} Saved".format(model_name))
-    
-print('#' * 90)
-print("Training finished ! Takes {} seconds ".format(time.time() - start))
+    print("Training finished ! Takes {} seconds ".format(time.time() - start))

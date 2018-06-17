@@ -14,3 +14,5 @@ def one_hot(inputs, feature_size):
         # in this case, passing value 1 to outputs(batch * sequence, feature)
     return outputs.scatter(1, index, 1).view(batch_size, sequence, -1)
 
+
+
