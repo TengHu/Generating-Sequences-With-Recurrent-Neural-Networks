@@ -112,7 +112,7 @@ class Corpus(object):
             for i, _ in enumerate(special_tokens):
                 ids[token][i+1] = self.position_encode(idx, special_tokens_idxes[i])       
             token += 1
-            if token % 10000 == 0:
+            if token % 1000000 == 0:
                 print("In Progress: {} / {}".format(token, ntokens))
         del file
         print("Done!\n")

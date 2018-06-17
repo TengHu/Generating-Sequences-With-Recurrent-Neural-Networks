@@ -1,5 +1,9 @@
 import torch
 
+def count_trainable_params(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    
 def one_hot(inputs, feature_size):
     '''
     One hot encoding with scatter function

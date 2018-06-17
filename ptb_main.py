@@ -20,6 +20,8 @@ import data
 import pdb
 import argparse
 from utils import one_hot
+from utils import count_trainable_params
+
 import data
 
 import multiprocessing as mp
@@ -101,7 +103,7 @@ parser.add_argument(
 parser.add_argument(
     '--save_every',
     type=int,
-    default=500,
+    default=2000,
     help='save model every # iterations')
 
 parser.add_argument(
@@ -198,6 +200,11 @@ def tensor2idx(tensor):
 
 
 def preprocess(data):
+    '''
+    Input (number of characters, ids)
+    Output Dataset((batch, sequence, features), (batch))
+    batch size = 1
+    '''
     inputs, targets = sequentialize(batchify(data))
     inputs = one_hot(inputs, feature_size)
     return torch.utils.data.TensorDataset(
@@ -210,24 +217,19 @@ def preprocess(data):
 
 
 def get_loss(outputs, targets):
-    loss = 0
-    try:
-        loss += criterion(outputs[:, -1, :], targets.long())
-    except:
-        pdb.set_trace()
-      
-    return loss
+    return criterion(outputs[:, -1, :], targets.long())
 
 
 def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     '''
-    Havent figured out how to do sampling
+    Havent figured out how to do sampling with positional encoding
     '''
     try:
         assert len(text) >= args.bptt
     except AssertionError:
-        print("Sampling must start with text has more than {} characters \n".
+        print("\nSampling must start with text has more than {} characters \n".
               format(args.bptt))
+   
     output_text = text
     text = text[-args.bptt:]  # drop last incomplete sequence
 
@@ -242,10 +244,10 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
     hiddens = model.initHidden(layer=3, batch_size=1)
 
     for i in range(0, max_sample_length):
-        one_hot_input = one_hot(inputs, feature_size)
-        outputs, hiddens = model(one_hot_input.to(device), hiddens)
+        one_hot_input = one_hot(inputs, feature_size).to(device)
+        outputs, hiddens = model(one_hot_input, hiddens)
         # TODO (niel.hu) temporarily use vocabulary size as feature size
-
+        
         # sample character
         char_id = torch.multinomial(
             outputs[0][-1].exp() / temperature, num_samples=1).item()
@@ -265,6 +267,8 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
             print("Finished sampling and saved it to {}".format(
                 args.output_file))
     else:
+        print('#' * 90)
+        print ("Sampling starts with warm up text:\n{}\n".format(warm_up_text))
         print('#' * 90)
         print("\nSampling Text: \n" + output_text + "\n")
         print('#' * 90)
@@ -295,7 +299,7 @@ def train(dataset):
         pin_memory=True)
     for batch_idx, data in enumerate(dataloader, 0):
         inputs, targets = data
-        
+
         inputs = inputs.to(device)
         targets = targets.to(device)
         
@@ -309,12 +313,11 @@ def train(dataset):
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
         total_loss += loss.item()
-
         if batch_idx % args.print_every == 0 and batch_idx > 0:
             print(
                 "Epoch : {} / {}, Iteration {} / {}, Loss every {} iteration :  {}, Takes {} Seconds".
                 format(epoch, args.epochs, batch_idx,
-                       int(len(dataset) / args.bptt), args.print_every,
+                       int(len(dataset) / (args.batch_size)), args.print_every,
                        loss.item(),
                        time.time() - start))
 
@@ -340,9 +343,9 @@ def train(dataset):
     return losses
 
 
-def evaluate(dataset):
+def evaluate(dataset, dynamic_evaluation=False):
     '''
-    Undynamic evaluation
+    dynamic evaluation
     '''
     hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
     total = 0.0
@@ -359,26 +362,32 @@ def evaluate(dataset):
     bpc = []
     for batch_idx, data in enumerate(dataloader, 0):
         inputs, targets = data
-
+        
+        optimizer.zero_grad()
+        
         inputs = inputs.to(device)
         targets = targets.to(device)
         
         detach(hiddens)
+
         outputs, hiddens = model(inputs, hiddens)
         loss = get_loss(outputs, targets)
-        total += outputs.shape[0]
-
-        ## only need feature vocabulary length
-        correct += (tensor2idx(
-            outputs[:, -1, :voc_length]) == targets.long().cpu()).sum()
         bpc.append(loss)
+        
+        loss.backward()
+        if dynamic_evaluation == True:
+            optimizer.step()
+        
+        total += outputs.shape[0]
+        ## only need feature vocabulary length
+        correct += (tensor2idx(outputs[:, -1, :voc_length]) == targets.long().cpu()).sum()
 
     if total == 0:
         print("Validation Set too small, reduce batch size")
     else:
         ## Debug Accuracy calculation
         print(
-            "Evaluation: Bits-per-character: {}\n, Perplexity: {}\n Accuracy: {} % \n".
+            "Evaluation: Bits-per-character: {}, \nPerplexity: {}\nAccuracy: {} % \n".
             format(sum(bpc) / len(bpc), "N/A",
                    correct.numpy() / total * 100))
     del loss, outputs
@@ -443,6 +452,8 @@ if __name__ == "__main__":
             raise ValueError("Model type not recognized")
 
     model = model.to(device)
+    print ("This model has {} trainable parameters".format(count_trainable_params(model)))
+    pdb.set_trace()
     ###############################################################################
     # Training code
     ###############################################################################
@@ -453,7 +464,9 @@ if __name__ == "__main__":
         print("Optimizer initializing")
 
     criterion = nn.NLLLoss().to(device)
-    warm_up_text = open(args.valid, encoding='utf-8').read()[0:args.bptt]
+    warm_up_text = open(args.train, encoding='utf-8').read()[0:args.bptt]
+
+        
     '''
     Training Loop
     Can interrupt with Ctrl + C
@@ -471,15 +484,12 @@ if __name__ == "__main__":
         print('#' * 90)
         print('Exiting from training early')
 
-    print("DONE TRAINING")
+    print("Finished Training!\n")
 
     print("Testing")
     evaluate(test_dataset)
 
-    sample(
-        warm_up_text,
-        save_to_file=True,
-        max_sample_length=args.max_sample_length)
+    sample(warm_up_text, save_to_file=False, max_sample_length=args.max_sample_length)
 
     with open("losses", 'w') as f:
         f.write(str(all_losses))
