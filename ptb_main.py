@@ -217,10 +217,11 @@ def preprocess(data):
 
 
 def get_loss(outputs, targets):
-    return criterion(outputs[:, -1, :], targets.long())
+    loss = 0
+    loss += criterion(outputs[:, -1, :], targets.long())
+    return loss
 
-
-def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
+def sample(text, save_to_file=False, max_sample_length=300, temperature=100.0):
     '''
     Havent figured out how to do sampling with positional encoding
     '''
@@ -240,11 +241,11 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
         ids[token][0] = corpus.vocabulary.char2idx[c]
         token += 1
 
-    inputs = ids.unsqueeze(0) # create batch dimension, batch size = 1
-    hiddens = model.initHidden(layer=3, batch_size=1)
+    inputs = ids.unsqueeze(0) # create batch dimension, batch size = 1 (1, bptt, 1)
+    hiddens = model.initHidden(batch_size=1)
 
     for i in range(0, max_sample_length):
-        one_hot_input = one_hot(inputs, feature_size).to(device)
+        one_hot_input = one_hot(inputs, feature_size).to(device) # (1, bptt, feature)
         outputs, hiddens = model(one_hot_input, hiddens)
         # TODO (niel.hu) temporarily use vocabulary size as feature size
         
@@ -253,12 +254,12 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
             outputs[0][-1].exp() / temperature, num_samples=1).item()
         output_text += corpus.vocabulary.idx2char[char_id]
 
-        # append text
+        # drop first character, append text
         text = text[1:] + corpus.vocabulary.idx2char[char_id]
 
-        # rolling inputs
+        # rolling input text
         inputs[0][0:(args.bptt - 1)] = inputs[0][1:]
-        inputs[0][args.bptt - 1] = char_id
+        inputs[0][args.bptt - 1][0] = char_id
         del outputs
 
     if save_to_file:
@@ -268,9 +269,7 @@ def sample(text, save_to_file=False, max_sample_length=300, temperature=1.0):
                 args.output_file))
     else:
         print('#' * 90)
-        print ("Sampling starts with warm up text:\n{}\n".format(warm_up_text))
-        print('#' * 90)
-        print("\nSampling Text: \n" + output_text + "\n")
+        print("Sampling Text, Starts from first {} warm up characters : \n".format(args.bptt) + output_text + "\n")
         print('#' * 90)
 
 
@@ -289,11 +288,11 @@ def detach(layers):
 def train(dataset):
     losses = []
     total_loss = 0
-    hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
+    hiddens = model.initHidden(batch_size=args.batch_size)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=args.num_workers,
         drop_last=True,
         pin_memory=True)
@@ -338,23 +337,19 @@ def train(dataset):
             }, "checkpoint_{}_epoch_{}_iteration_{}.{}.pth".format(
                 int(time.time()), epoch, batch_idx, model_type))
 
-        del loss, outputs
-
+        del loss, outputs    
     return losses
 
 
 def evaluate(dataset, dynamic_evaluation=False):
-    '''
-    dynamic evaluation
-    '''
-    hiddens = model.initHidden(layer=3, batch_size=args.batch_size)
+    hiddens = model.initHidden(batch_size=args.batch_size)
     total = 0.0
     correct = 0.0
     voc_length = len(corpus.vocabulary)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=args.batch_size,
-        shuffle=False,
+        shuffle=True,
         num_workers=args.num_workers,
         drop_last=True,
         pin_memory=True)
@@ -448,12 +443,13 @@ if __name__ == "__main__":
     else:
         if model_type == 'DLSTM3':
             model = models.DLSTM3(feature_size, hidden_size)
+        if model_type == 'SingleLSTM':
+            model = models.SingleLSTM(feature_size, hidden_size)
         else:
             raise ValueError("Model type not recognized")
 
     model = model.to(device)
     print ("This model has {} trainable parameters".format(count_trainable_params(model)))
-    pdb.set_trace()
     ###############################################################################
     # Training code
     ###############################################################################
