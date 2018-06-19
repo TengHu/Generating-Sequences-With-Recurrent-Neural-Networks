@@ -172,19 +172,21 @@ def get_batch(data, idx):
 
 def sequentialize(data):
     '''
-    Input: (number_of_chars, ids)
+    Input: (number of chars, ids)
     Output:
     (batch, sequence, ids)
     (batch)
-    batch size = 1
+    batch_size = 1
     '''
     ids_size = data.shape[1]
-    nsequence = int(data.shape[0] / args.bptt)
-    data = data[0:nsequence * args.bptt, :].view(-1, args.bptt, ids_size)
-    targets = data[:, -1, 0]  # only want the character id as target
+    nsequence = int(data.shape[0]/args.bptt)
+    data = data[0:(nsequence*args.bptt), :].view(-1, args.bptt, ids_size)
+    targets = data[1:, 0, 0]
+    # for each sequence, targets is the first character of next sequence,
+    # only want the character id as target
+    data = data[:(targets.shape[0]),:,:] # drop last line to make data the same size as targets
     return data, targets
-
-
+    
 def tensor2idx(tensor):
     '''
     Input: (#batch, feature)
@@ -369,7 +371,7 @@ def evaluate(dataset, dynamic_evaluation=False):
         loss = get_loss(outputs, targets)
         bpc.append(loss)
         
-        loss.backward()
+        loss.backward(retain_graph=True)
         if dynamic_evaluation == True:
             optimizer.step()
         
@@ -443,7 +445,7 @@ if __name__ == "__main__":
     else:
         if model_type == 'DLSTM3':
             model = models.DLSTM3(feature_size, hidden_size)
-        if model_type == 'SingleLSTM':
+        elif model_type == 'SingleLSTM':
             model = models.SingleLSTM(feature_size, hidden_size)
         else:
             raise ValueError("Model type not recognized")
@@ -453,7 +455,7 @@ if __name__ == "__main__":
     ###############################################################################
     # Training code
     ###############################################################################
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.99)
     try:
         optimizer.load_state_dict(checkpoint['optimizer'])
     except NameError:
