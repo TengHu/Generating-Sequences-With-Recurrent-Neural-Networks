@@ -455,7 +455,7 @@ if __name__ == "__main__":
     ###############################################################################
     # Training code
     ###############################################################################
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.99)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     try:
         optimizer.load_state_dict(checkpoint['optimizer'])
     except NameError:
@@ -492,9 +492,9 @@ if __name__ == "__main__":
     with open("losses", 'w') as f:
         f.write(str(all_losses))
 
-    model_name = "{}.{}.pth".format(model_type, time.time())
+    model_name = "{}.{}.pth".format(model_type, int(time.time()))
     save_checkpoint({'state_dict': model.state_dict()}, model_name)
     print("Model {} Saved".format(model_name))
 
     print('#' * 90)
-    print("Training finished ! Takes {} seconds ".format(time.time() - start))
+    print("Training finished ! Takes {} seconds ".format(int(time.time() - start)))
